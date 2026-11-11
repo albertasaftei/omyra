@@ -148,6 +148,24 @@ describe("audio ownership and lifecycle", () => {
     expect(fake.racks.filter((r) => !r.dead).length).toBe(1);
     e.dispose();
   });
+  it("plays Zen's opening pad when switching presets during playback", async () => {
+    const e = new AudioEngine(createPresetSettings("ethereal"), 42);
+    await e.start();
+    fake.time = 1;
+    fake.callback!(1);
+    e.apply(createPresetSettings("zen"));
+    await flush();
+
+    const zen = fake.racks[1];
+    fake.callback!(1.03);
+    expect(zen.play).not.toHaveBeenCalled();
+    fake.callback!(1.13);
+    expect(zen.play).toHaveBeenCalledWith(
+      expect.objectContaining({ layer: "pad", time: 0 }),
+      1.13,
+    );
+    e.dispose();
+  });
   it("disposes pending initialization without reviving a destroyed engine", async () => {
     fake.defer = true;
     const e = new AudioEngine(createPresetSettings(), 42);

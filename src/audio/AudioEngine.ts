@@ -322,20 +322,24 @@ export class AudioEngine {
       return;
     }
     this.lastTick = time;
-    const position = this.position(time),
-      slot = this.active;
+    const slot = this.active;
+    const windowEnd = time + 0.05;
+    if (windowEnd <= slot.anchor) return;
+    const windowStart = Math.max(time, slot.anchor);
+    const position = this.position(windowStart);
+    const firstWindow = slot.phrase === -1;
     const plan = slot.performance.at(position, this.settings);
     if (slot.phrase !== plan.index) {
       slot.phrase = plan.index;
-      this.applyMix(plan, time);
+      this.applyMix(plan, windowStart);
     }
-    const end = position + 0.05;
+    const end = this.position(windowEnd);
     for (const event of slot.performance.between(
-      Math.max(slot.until, position - 0.001),
+      firstWindow ? slot.until : Math.max(slot.until, position - 0.001),
       end,
       this.settings,
     ))
-      this.play(event, time + Math.max(0, event.time - position));
+      this.play(event, windowStart + Math.max(0, event.time - position));
     slot.until = end;
     if (time - this.lastSample >= 60) {
       this.lastSample = time;
