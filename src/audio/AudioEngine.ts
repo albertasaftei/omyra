@@ -1,39 +1,47 @@
-import { identities } from "./identities";
-import { VoiceRack } from "./VoiceRack";
-import { cinematicStep, getSoundscape } from "./soundscapes";
 import * as Tone from "tone";
-import {
-  layers,
-  presets,
-  NoteGenerator,
-  type Settings,
-  type Layer,
-  type MusicalEvent,
-} from "./model";
+import { Composer, type NoteEvent, type PhrasePlan } from "./Composer";
+import { Performance } from "./Performance";
+import { VoiceRack } from "./VoiceRack";
+import { layers, type Settings, type MusicalEvent } from "./model";
+export type PlaybackState = "idle" | "starting" | "playing" | "paused";
+type RackSlot = {
+  rack: VoiceRack;
+  performance: Performance;
+  position: number;
+  anchor: number;
+  until: number;
+  phrase: number;
+};
 export class AudioEngine {
   private settings: Settings;
+  private state: PlaybackState = "idle";
+  private error = "";
   private initialized = false;
-  private playing = false;
-  private master!: Tone.Gain;
-  private highpass!: Tone.Filter;
   private generation = 0;
-  private rack!: VoiceRack;
-  private retired = new Map<VoiceRack, ReturnType<typeof setTimeout>>();
+  private master?: Tone.Gain;
   private nodes: { dispose(): unknown }[] = [];
-  private generators = {
-    bells: new NoteGenerator(),
-    particles: new NoteGenerator(),
-  };
-  private chord = 0;
-  private melodyStep = 0;
-  private pulseStart: number | null = null;
-  private pulseStep = -1;
+  private destination?: Tone.Filter;
+  private active?: RackSlot;
+  private fading?: VoiceRack;
+  private fadeTimer?: ReturnType<typeof setTimeout>;
+  private pending?: Promise<void>;
+  private desired: string;
+  private activeId = "";
+  private wantsPlay = false;
   private scheduleId?: number;
-  private next = { pad: 0, bells: 0, drone: 0, air: 0, particles: 0 };
+  private lastTick = 0;
+  private elapsed = 0;
+  private elapsedAnchor = 0;
   private listeners = new Set<(event: MusicalEvent) => void>();
-  private startPromise: Promise<void> | null = null;
-  constructor(settings: Settings) {
+  private stateListeners = new Set<() => void>();
+  private samples: object[] = [];
+  private lastSample = 0;
+  private misses = 0;
+  private seed?: number;
+  constructor(settings: Settings, seed?: number) {
     this.settings = settings;
+    this.desired = settings.preset;
+    this.seed = seed;
   }
   subscribe(listener: (event: MusicalEvent) => void) {
     this.listeners.add(listener);
@@ -41,284 +49,349 @@ export class AudioEngine {
       this.listeners.delete(listener);
     };
   }
+  subscribeState(listener: () => void) {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+  get status() {
+    return this.state;
+  }
+  get failure() {
+    return this.error;
+  }
+  get elapsedSeconds() {
+    return (
+      this.elapsed +
+      (this.state === "playing"
+        ? Math.max(0, Tone.immediate() - this.elapsedAnchor)
+        : 0)
+    );
+  }
+  private notify() {
+    for (const f of this.stateListeners) f();
+  }
+  private setState(state: PlaybackState, error = "") {
+    this.state = state;
+    this.error = error;
+    this.notify();
+  }
+  private contextChanged = () => {
+    if (this.state === "playing" && Tone.getContext().state !== "running")
+      this.pause("Audio was interrupted. Press play to continue.");
+  };
   private init() {
+    if (this.initialized) return;
     this.master = new Tone.Gain(0).toDestination();
+    this.nodes.push(this.master);
     const limiter = new Tone.Limiter(-3).connect(this.master);
-    const highpass = new Tone.Filter(35, "highpass").connect(limiter);
-    this.highpass = highpass;
-    this.nodes.push(this.master, limiter, highpass);
-    this.rack = new VoiceRack(this.settings.preset, highpass);
+    this.nodes.push(limiter);
+    this.destination = new Tone.Filter(35, "highpass").connect(limiter);
+    this.nodes.push(this.destination);
+    Tone.getContext().on("statechange", this.contextChanged);
     this.scheduleId = Tone.getTransport().scheduleRepeat(
       (time) => this.tick(time),
-      0.25,
+      0.05,
     );
     this.initialized = true;
   }
+  private position(time = Tone.immediate()) {
+    return this.active
+      ? this.active.position +
+          (this.state === "playing"
+            ? Math.max(0, time - this.active.anchor)
+            : 0)
+      : 0;
+  }
+  private startTask?: Promise<void>;
   async start() {
-    if (this.startPromise) return this.startPromise;
-    this.startPromise = this.begin();
+    if (this.state === "playing") return;
+    if (this.startTask) return this.startTask;
+    this.startTask = this.begin();
     try {
-      await this.startPromise;
+      await this.startTask;
     } finally {
-      this.startPromise = null;
+      this.startTask = undefined;
     }
   }
   private async begin() {
+    this.wantsPlay = true;
+    this.setState("starting");
     const generation = this.generation;
-    await Tone.start();
-    if (generation !== this.generation) return;
-    if (this.playing) return;
-    if (!this.initialized) this.init();
-    await this.rack.ready;
-    if (generation !== this.generation) return;
-    this.rack.output.gain.rampTo(1, 2);
-    this.playing = true;
-    this.pulseStart = null;
-    this.pulseStep = -1;
-    this.next = { pad: 0, bells: 0, drone: 0, air: 0, particles: 0 };
-    this.apply(this.settings);
-    this.master.gain.rampTo(this.settings.master, 2);
-    Tone.getTransport().start();
+    try {
+      await Tone.start();
+      if (generation !== this.generation || !this.wantsPlay) return;
+      this.init();
+      await this.ensureRack();
+      if (generation !== this.generation || !this.wantsPlay || !this.active)
+        return;
+      // Suspension must not silently leave the UI in a playing state.
+      if (Tone.getContext().state !== "running")
+        throw new Error("Audio is suspended");
+      const now = Tone.now() + 0.02;
+      this.active.anchor = now;
+      this.active.until = this.active.position;
+      this.active.phrase = -1;
+      this.elapsedAnchor = now;
+      this.lastTick = now;
+      this.setState("playing");
+      this.active.rack.output.gain.rampTo(1, 0.4);
+      this.master!.gain.rampTo(this.settings.master, 0.5);
+      for (const event of this.active.performance.sustaining(
+        this.active.position,
+        this.settings,
+      ))
+        this.play(event, now);
+      if (Tone.getTransport().state !== "started")
+        Tone.getTransport().start(now);
+    } catch {
+      if (generation === this.generation) {
+        this.wantsPlay = false;
+        this.setState(
+          "paused",
+          "Audio could not start. Press play to try again.",
+        );
+      }
+    }
   }
-  pause() {
-    if (!this.playing) return;
-    this.playing = false;
-    const now = Tone.now();
-    this.master.gain.rampTo(0, 0.5);
-    Tone.getTransport().pause();
-    this.rack.release(now);
+  /** Serial construction coalesces requests; no second pending reverb/rack. */
+  private async ensureRack(): Promise<void> {
+    if (!this.initialized) return;
+    if (this.pending) {
+      await this.pending;
+      if (!this.active || this.activeId !== this.desired)
+        return this.ensureRack();
+      return;
+    }
+    if (
+      this.active &&
+      this.activeId === this.desired &&
+      !this.active.rack.disposed
+    )
+      return;
+    const generation = this.generation;
+    this.pending = (async () => {
+      while (generation === this.generation) {
+        const id = this.desired;
+        const rack = new VoiceRack(id, this.destination!);
+        try {
+          await rack.ready;
+        } catch (error) {
+          rack.dispose();
+          throw error;
+        }
+        if (generation !== this.generation) {
+          rack.dispose();
+          return;
+        }
+        if (id !== this.desired) {
+          rack.dispose();
+          continue;
+        }
+        const previous = this.active;
+        const continuing = previous && this.activeId === id;
+        const performance = continuing
+          ? previous.performance
+          : new Performance(
+              new Composer(
+                id,
+                this.seed ?? crypto.getRandomValues(new Uint32Array(1))[0],
+              ),
+              this.settings,
+            );
+        const now = Tone.now();
+        this.clearFading();
+        if (previous && !previous.rack.disposed) {
+          if (this.state === "playing") {
+            previous.rack.output.gain.cancelScheduledValues(Tone.immediate());
+            previous.rack.output.gain.rampTo(0, 3);
+            previous.rack.release(now);
+            this.fading = previous.rack;
+            this.fadeTimer = setTimeout(() => this.clearFading(), 3200);
+          } else previous.rack.dispose();
+        }
+        this.active = {
+          rack,
+          performance,
+          position: continuing ? previous.position : 0,
+          anchor: now,
+          until: continuing ? previous.position : 0,
+          phrase: -1,
+        };
+        this.activeId = id;
+        this.applyMix();
+        if (this.state === "playing") rack.output.gain.rampTo(1, 3);
+        return;
+      }
+    })();
+    try {
+      await this.pending;
+    } finally {
+      this.pending = undefined;
+    }
+  }
+  private clearFading() {
+    if (this.fadeTimer) clearTimeout(this.fadeTimer);
+    this.fadeTimer = undefined;
+    this.fading?.dispose();
+    this.fading = undefined;
+  }
+  pause(message = "", cutoff = Tone.immediate()) {
+    this.wantsPlay = false;
+    if (this.state === "playing") {
+      const now = Math.min(cutoff, Tone.immediate());
+      this.elapsed += Math.max(0, now - this.elapsedAnchor);
+      if (this.active) {
+        this.active.position = this.position(now);
+        this.active.until = this.active.position;
+      }
+    }
+    this.setState("paused", message);
+    // Disposing the rack cancels Tone's already-submitted future note starts.
+    // A short output fade precedes disposal; resume reconstructs voices, not music.
+    this.master?.gain.cancelScheduledValues(Tone.immediate());
+    this.master?.gain.rampTo(0, 0.04);
+    this.clearFading();
+    if (this.active && !this.active.rack.disposed) {
+      const rack = this.active.rack;
+      rack.output.gain.cancelScheduledValues(Tone.immediate());
+      rack.output.gain.rampTo(0, 0.04);
+      rack.release(Tone.now());
+      this.fading = rack;
+      this.fadeTimer = setTimeout(() => this.clearFading(), 60);
+      // Mark unavailable immediately so a quick resume cannot reuse queued voices.
+      rack.retired = true;
+    }
   }
   stop() {
     this.pause();
-    if (this.initialized) Tone.getTransport().stop();
+    this.active?.rack.dispose();
+    this.active = undefined;
+    this.activeId = "";
+    this.elapsed = 0;
   }
   apply(settings: Settings) {
-    const presetChanged = this.settings.preset !== settings.preset;
+    const changed = this.settings.preset !== settings.preset;
     this.settings = settings;
+    this.desired = settings.preset;
     if (!this.initialized) return;
-    if (presetChanged) {
-      const previous = this.rack;
-      previous.output.gain.rampTo(0, 3);
-      previous.release(Tone.now());
-      this.retired.set(
-        previous,
-        setTimeout(() => {
-          previous.dispose();
-          this.retired.delete(previous);
-        }, 3500),
-      );
-      this.rack = new VoiceRack(settings.preset, this.highpass);
-      const incoming = this.rack;
-      void incoming.ready.then(() => {
-        if (this.initialized && this.rack === incoming)
-          incoming.output.gain.rampTo(1, 3);
+    this.applyMix();
+    if (changed)
+      void this.ensureRack().catch(() => {
+        this.pause("The soundscape could not load. Press play to retry.");
       });
-      this.chord = 0;
-      this.melodyStep = 0;
-      this.pulseStart = null;
-      this.pulseStep = -1;
-      this.generators = {
-        bells: new NoteGenerator(),
-        particles: new NoteGenerator(),
-      };
-      this.next = { pad: 0, bells: 1, drone: 0, air: 0, particles: 3 };
-    }
-    this.master.gain.rampTo(this.playing ? settings.master : 0, 0.4);
-    for (const l of layers)
-      this.rack.buses[l].gain.rampTo(
-        settings.layers[l].enabled ? settings.layers[l].volume : 0,
-        1.2,
+  }
+  private applyMix(phrase?: PhrasePlan, time = Tone.now()) {
+    this.master?.gain.rampTo(
+      this.state === "playing" ? this.settings.master : 0,
+      0.3,
+      time,
+    );
+    if (!this.active) return;
+    const plan =
+      phrase ?? this.active.performance.at(this.position(), this.settings);
+    for (const layer of layers)
+      this.active.rack.buses[layer].gain.rampTo(
+        this.settings.layers[layer].enabled
+          ? this.settings.layers[layer].volume * plan.dynamics[layer]
+          : 0,
+        0.4,
+        time,
       );
   }
-  private emit(layer: Layer, time: number, duration: number) {
+  private play(event: NoteEvent, time: number) {
+    if (!this.active || !this.settings.layers[event.layer].enabled) return;
+    this.active.rack.play(event, time);
     for (const f of this.listeners)
       f({
-        layer,
+        layer: event.layer,
         audioTime: time,
-        duration,
-        intensity: this.settings.layers[layer].volume,
+        duration: event.duration,
+        intensity: this.settings.layers[event.layer].volume * event.velocity,
       });
   }
   private tick(time: number) {
-    if (!this.playing) return;
-    const position = Tone.getTransport().seconds;
-    const profile = getSoundscape(this.settings.preset);
-    const voice = identities[this.settings.preset] ?? identities.ethereal;
-    const root = (
-      presets.find((p) => p.id === this.settings.preset) ?? presets[0]
-    ).root;
-    if (profile.pulse) {
-      this.pulseStart ??= position;
-      const step = Math.floor(
-        (position - this.pulseStart + 0.001) / profile.pulse.step,
+    if (this.state !== "playing" || !this.active) return;
+    if (time - this.lastTick > 2) {
+      this.misses++;
+      this.pause(
+        "Playback was interrupted. Press play to continue.",
+        Math.min(this.lastTick, Tone.immediate()),
       );
-      if (step === this.pulseStep) return;
-      this.pulseStep = step;
-      const event = cinematicStep(
-        profile,
-        step,
-        this.settings.layers.bells.density,
-      );
-      const hz = (interval: number) =>
-        Tone.Frequency(root + interval, "midi").toFrequency();
-      const enabled = (layer: Layer) => this.settings.layers[layer].enabled;
-      if (event.phraseStart) {
-        if (enabled("pad")) {
-          event.chord.forEach((interval, index) =>
-            this.rack.pad.triggerAttackRelease(
-              hz(interval),
-              voice.padHold,
-              time + index * voice.strum,
-              0.46 * event.swell,
-            ),
-          );
-          this.emit("pad", time, profile.phrase);
-        }
-        if (enabled("drone") && !profile.drive) {
-          this.rack.drone.triggerAttackRelease(
-            hz(event.chord[0] - 12),
-            profile.phrase - 0.5,
-            time,
-            0.5,
-          );
-          this.emit("drone", time, profile.phrase);
-        }
-        if (enabled("air")) this.emit("air", time, profile.phrase);
-      }
-      if (profile.drive && enabled("drone")) {
-        if (step % profile.drive.bassEvery === 0) {
-          const duration = profile.pulse.step * profile.drive.bassEvery * 0.6;
-          this.rack.drone.triggerAttackRelease(
-            hz(event.chord[0] - 12),
-            duration,
-            time,
-            0.45 * event.swell,
-          );
-          this.emit("drone", time, duration);
-        }
-        if (
-          profile.drive.percussionEvery &&
-          step % profile.drive.percussionEvery === 0
-        ) {
-          this.rack.percussion?.triggerAttackRelease(
-            hz(event.chord[0] - 12),
-            0.12,
-            time,
-            0.4 * event.swell,
-          );
-        }
-      }
-      if (enabled("bells") && event.active && event.voiced) {
-        const duration = voice.leadHold;
-        this.rack.bells.triggerAttackRelease(
-          hz(event.interval),
-          duration,
-          time,
-          event.velocity,
-        );
-        this.emit("bells", time, duration + profile.bellDecay);
-      }
-      const particleDensity = this.settings.layers.particles.density;
-      const particleStride =
-        (profile.drive?.shimmerEvery ?? 4) *
-        (particleDensity < 0.35 ? 4 : particleDensity < 0.7 ? 2 : 1);
-      if (
-        enabled("particles") &&
-        particleDensity > 0 &&
-        step % particleStride === 2
-      ) {
-        this.rack.particles.triggerAttackRelease(
-          hz(
-            event.chord[
-              (Math.floor(step / particleStride) + 2) % event.chord.length
-            ] +
-              (voice.particleOctave - 1) * 12,
-          ),
-          voice.particleHold,
-          time,
-          0.28 * event.swell,
-        );
-        this.emit("particles", time, 4);
-      }
       return;
     }
-    for (const l of layers) {
-      const config = this.settings.layers[l];
-      if (!config.enabled || position < this.next[l]) continue;
-      const density = config.density;
-      if (l === "pad") {
-        const chord = profile.chords[this.chord++ % profile.chords.length];
-        chord.forEach((interval, index) =>
-          this.rack.pad.triggerAttackRelease(
-            Tone.Frequency(root + interval, "midi").toFrequency(),
-            voice.padHold,
-            time + index * voice.strum,
-            0.5,
-          ),
-        );
-        this.next.pad = position + profile.phrase;
-        this.emit(l, time, profile.phrase);
-      }
-      if (l === "drone") {
-        this.rack.drone.triggerRelease(time);
-        this.rack.drone.triggerAttack(
-          Tone.Frequency(root - 12, "midi").toFrequency(),
-          time + 0.05,
-          0.6,
-        );
-        this.next.drone = position + 65;
-        this.emit(l, time, 65);
-      }
-      if (l === "air") {
-        this.next.air = position + 8;
-        this.emit(l, time, 8);
-      }
-      if (l === "bells" || l === "particles") {
-        if (density > 0) {
-          const n =
-            l === "bells"
-              ? root +
-                profile.bellOctave * 12 +
-                profile.scale[
-                  voice.motif[this.melodyStep % voice.motif.length] %
-                    profile.scale.length
-                ]
-              : this.generators.particles.next(
-                  root,
-                  voice.particleOctave,
-                  profile.scale,
-                );
-          this.rack[l].triggerAttackRelease(
-            Tone.Frequency(n, "midi").toFrequency(),
-            l === "bells" ? voice.leadHold : voice.particleHold,
-            time,
-            0.35 + Math.random() * 0.25,
-          );
-          this.emit(l, time, 4);
-        }
-        this.next[l] =
-          position +
-          (l === "bells"
-            ? voice.gaps[this.melodyStep++ % voice.gaps.length] *
-              (1.4 - density)
-            : profile.spacing * (5 + (1 - density) * 14 + Math.random() * 6));
-      }
+    this.lastTick = time;
+    const position = this.position(time),
+      slot = this.active;
+    const plan = slot.performance.at(position, this.settings);
+    if (slot.phrase !== plan.index) {
+      slot.phrase = plan.index;
+      this.applyMix(plan, time);
     }
+    const end = position + 0.05;
+    for (const event of slot.performance.between(
+      Math.max(slot.until, position - 0.001),
+      end,
+      this.settings,
+    ))
+      this.play(event, time + Math.max(0, event.time - position));
+    slot.until = end;
+    if (time - this.lastSample >= 60) {
+      this.lastSample = time;
+      this.samples.push(this.diagnostics());
+      if (this.samples.length > 1440) this.samples.shift();
+    }
+  }
+  diagnostics() {
+    const memory = (
+      globalThis.performance as globalThis.Performance & {
+        memory?: { usedJSHeapSize: number; totalJSHeapSize: number };
+      }
+    )?.memory;
+    return {
+      heapBytes: memory?.usedJSHeapSize ?? null,
+      heapCapacity: memory?.totalJSHeapSize ?? null,
+      status: this.state,
+      elapsed: this.elapsedSeconds,
+      preset: this.activeId,
+      active: this.active && !this.active.rack.disposed ? 1 : 0,
+      fading: this.fading ? 1 : 0,
+      pending: this.pending ? 1 : 0,
+      misses: this.misses,
+      voices: this.active?.rack.voiceCounts(),
+      composer: this.active?.performance.diagnostics(),
+    };
+  }
+  exportDiagnostics() {
+    return JSON.stringify({
+      version: 1,
+      userAgent: navigator.userAgent,
+      cores: navigator.hardwareConcurrency,
+      samples: this.samples,
+      current: this.diagnostics(),
+    });
   }
   dispose() {
     this.generation++;
-    this.stop();
+    this.wantsPlay = false;
+    this.clearFading();
+    this.active?.rack.dispose();
+    this.active = undefined;
     if (this.scheduleId !== undefined)
       Tone.getTransport().clear(this.scheduleId);
-    for (const [rack, timer] of this.retired) {
-      clearTimeout(timer);
-      rack.dispose();
-    }
-    this.retired.clear();
-    this.rack?.dispose();
+    this.scheduleId = undefined;
+    if (this.initialized)
+      Tone.getContext().off("statechange", this.contextChanged);
     this.nodes.reverse().forEach((n) => n.dispose());
     this.nodes = [];
-    this.listeners.clear();
+    this.master = undefined;
+    this.destination = undefined;
     this.initialized = false;
+    this.state = "idle";
+    this.elapsed = 0;
+    this.samples = [];
+    this.listeners.clear();
+    this.stateListeners.clear();
   }
 }

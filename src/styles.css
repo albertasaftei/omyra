@@ -1388,3 +1388,107 @@ footer {
     padding: 8px 16px 16px;
   }
 }
+
+.custom-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+.custom-select > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-select > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 180ms ease-out;
+}
+.custom-select[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+.custom-select:hover,
+.custom-select:focus-visible,
+.custom-select[aria-expanded="true"] {
+  background: #c4c9e018;
+}
+.preset-select .custom-select {
+  flex: 1;
+  max-width: 260px;
+  font-size: 14px;
+}
+.select-menu {
+  position: fixed;
+  z-index: 100;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid #c4c9e030;
+  border-radius: 12px;
+  background: #111522;
+  color: var(--text);
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.select-option.is-active {
+  background: #c4c9e018;
+}
+.select-option[aria-selected="true"] {
+  color: #fff;
+}
+.select-option svg {
+  color: #c6c3db;
+  flex-shrink: 0;
+}
+.select-group {
+  padding: 12px 12px 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.select-menu > div + div:has(.select-group) {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.shuffle-button.is-active {
+  color: var(--text);
+  background: #c4c9e024;
+}
+.shuffle-button.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.shuffle-button {
+  position: relative;
+}
+.shuffle-help {
+  min-height: 18px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}

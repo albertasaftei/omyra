@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AudioEngine } from "./audio/AudioEngine";
+import { startPresetPlaylist } from "./audio/presetPlaylist";
 import { usePreferences } from "./state/preferences";
 export function usePlayerSession() {
   const [audioEngine] = useState(
@@ -8,16 +9,28 @@ export function usePlayerSession() {
   const [playbackStatus, setPlaybackStatus] = useState<
     "idle" | "starting" | "playing" | "paused"
   >("idle");
+  const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [playbackError, setPlaybackError] = useState("");
   const [isAmbientDisplay, setAmbientDisplay] = useState(false);
   const [isPageHidden, setPageHidden] = useState(document.hidden);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   useEffect(() => {
-    audioEngine.apply(usePreferences.getState().settings);
-    return usePreferences.subscribe((state, previous) => {
-      if (state.settings !== previous.settings)
-        audioEngine.apply(state.settings);
+    const unsubscribeState = audioEngine.subscribeState(() => {
+      setPlaybackStatus(audioEngine.status);
+      setPlaybackError(audioEngine.failure);
+      setElapsedSeconds(Math.floor(audioEngine.elapsedSeconds));
     });
+    audioEngine.apply(usePreferences.getState().settings);
+    const unsubscribePreferences = usePreferences.subscribe(
+      (state, previous) => {
+        if (state.settings !== previous.settings)
+          audioEngine.apply(state.settings);
+      },
+    );
+    return () => {
+      unsubscribeState();
+      unsubscribePreferences();
+    };
   }, [audioEngine]);
   useEffect(() => {
     const handleVisibilityChange = () => setPageHidden(document.hidden);
@@ -43,9 +56,22 @@ export function usePlayerSession() {
   }, [audioEngine]);
   useEffect(() => {
     if (playbackStatus !== "playing") return;
-    const id = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    const id = setInterval(
+      () => setElapsedSeconds(Math.floor(audioEngine.elapsedSeconds)),
+      1000,
+    );
     return () => clearInterval(id);
-  }, [playbackStatus]);
+  }, [playbackStatus, audioEngine]);
+  useEffect(() => {
+    if (!shuffleEnabled) return;
+    return startPresetPlaylist(audioEngine);
+  }, [shuffleEnabled, audioEngine]);
+
+  function toggleShuffle() {
+    if (!shuffleEnabled) usePreferences.getState().selectRandomPreset();
+    setShuffleEnabled(!shuffleEnabled);
+  }
+
   async function togglePlayback() {
     if (playbackStatus === "playing") {
       audioEngine.pause();
@@ -56,7 +82,8 @@ export function usePlayerSession() {
     setPlaybackError("");
     try {
       await audioEngine.start();
-      setPlaybackStatus("playing");
+      setPlaybackStatus(audioEngine.status);
+      setPlaybackError(audioEngine.failure);
     } catch {
       setPlaybackStatus("paused");
       setPlaybackError(
@@ -76,6 +103,8 @@ export function usePlayerSession() {
   }
   return {
     audioEngine,
+    shuffleEnabled,
+    toggleShuffle,
     playbackStatus,
     playbackError,
     isAmbientDisplay,
