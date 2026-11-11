@@ -1,4 +1,5 @@
 import React from "react";
+import { Select } from "./Select";
 import { Pencil } from "lucide-react";
 import { backgrounds, parseBackgroundId } from "../visualizer/backgrounds";
 import { usePreferences, selectVisualColor } from "../state/preferences";
@@ -40,7 +41,7 @@ export function VisualPreferences() {
   return (
     <footer className="visual-preferences">
       <div className="visual-heading">
-        <h2>BackgroundId settings</h2>
+        <h2>Background settings</h2>
         <button
           className="quiet-button"
           aria-pressed={visualsEnabled}
@@ -54,33 +55,29 @@ export function VisualPreferences() {
       </div>
       {visualsEnabled && (
         <div className="visual-controls">
-          <label className="background-choice">
-            <span>BackgroundId</span>
-            <select
-              aria-label="Background"
+          <div className="background-choice">
+            <span>Background</span>
+            <Select
+              label="Background"
               value={background}
-              onChange={(e) => setBackground(parseBackgroundId(e.target.value))}
-            >
-              {backgrounds.map((backgroundOption) => (
-                <option key={backgroundOption.id} value={backgroundOption.id}>
-                  {backgroundOption.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="color-mode-choice">
+              onChange={(value) => setBackground(parseBackgroundId(value))}
+              options={backgrounds.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </div>
+          <div className="color-mode-choice">
             <span>Color mode</span>
-            <select
-              aria-label="Color mode"
+            <Select
+              label="Color mode"
               value={colorMode}
-              onChange={(event) =>
-                setColorMode(event.target.value === "drift" ? "drift" : "fixed")
+              onChange={(value) =>
+                setColorMode(value === "drift" ? "drift" : "fixed")
               }
-            >
-              <option value="fixed">Fixed</option>
-              <option value="drift">Drift</option>
-            </select>
-          </label>
+              options={[
+                { value: "fixed", label: "Fixed" },
+                { value: "drift", label: "Drift" },
+              ]}
+            />
+          </div>
           <div className="palette-row">
             <span className="preference-label">Color</span>
             <div className="palette-options">
@@ -122,18 +119,19 @@ export function VisualPreferences() {
               </label>
             </div>
           </div>
-          <label className="quality-choice">
+          <div className="quality-choice">
             <span>Quality</span>
-            <select
-              aria-label="Visual quality"
+            <Select
+              label="Visual quality"
               value={visualQuality}
-              onChange={(e) => setVisualQuality(e.target.value)}
-            >
-              <option value="low">Low power</option>
-              <option value="balanced">Balanced</option>
-              <option value="high">High visualQuality</option>
-            </select>
-          </label>
+              onChange={setVisualQuality}
+              options={[
+                { value: "low", label: "Low power" },
+                { value: "balanced", label: "Balanced" },
+                { value: "high", label: "High quality" },
+              ]}
+            />
+          </div>
         </div>
       )}
       <span className="footer-description">Composed in the moment.</span>

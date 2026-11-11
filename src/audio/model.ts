@@ -194,7 +194,7 @@ export function createPresetSettings(id = "ethereal"): Settings {
   const preset = presets.find((preset) => preset.id === id) ?? presets[0];
   return {
     preset: preset.id,
-    master: 0.65,
+    master: 0.72,
     layers: Object.fromEntries(
       layers.map((layer, i) => [
         layer,

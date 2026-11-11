@@ -30,6 +30,8 @@ class VisualizerErrorBoundary extends Component<
 export default function App() {
   const {
     audioEngine,
+    shuffleEnabled,
+    toggleShuffle,
     playbackStatus,
     playbackError,
     isAmbientDisplay,
@@ -50,7 +52,7 @@ export default function App() {
       className={isAmbientDisplay ? "app ambient" : "app"}
       style={{ "--accent": visualColor } as React.CSSProperties}
     >
-      <div className="atmosphere" aria-isPageHidden="true">
+      <div className="atmosphere" aria-hidden="true">
         {visualsEnabled && (
           <VisualizerErrorBoundary onFailure={() => setVisualsEnabled(false)}>
             <Suspense fallback={null}>
@@ -70,9 +72,7 @@ export default function App() {
         <a className="wordmark" href="/" aria-label="OMYRA home">
           OMYRA
         </a>
-        <span className="brand-description">
-          Generative ambient sound
-        </span>
+        <span className="brand-description">Generative ambient sound</span>
         <button
           className="quiet-button display-button"
           onClick={toggleAmbientDisplay}
@@ -99,10 +99,10 @@ export default function App() {
               : "Play soundscape"
           }
         >
-          <span className="play-icon" aria-isPageHidden="true">
+          <span className="play-icon" aria-hidden="true">
             <Play size={22} fill="currentColor" strokeWidth={1} />
           </span>
-          <span className="pause-icon" aria-isPageHidden="true">
+          <span className="pause-icon" aria-hidden="true">
             <Pause size={22} fill="currentColor" strokeWidth={1} />
           </span>
         </button>
@@ -130,7 +130,10 @@ export default function App() {
         )}
       </section>
       <div className="console">
-        <SoundControls />
+        <SoundControls
+          shuffleEnabled={shuffleEnabled}
+          onToggleShuffle={toggleShuffle}
+        />
         <VisualPreferences />
       </div>
     </main>

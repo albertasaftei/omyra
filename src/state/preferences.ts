@@ -28,6 +28,7 @@ interface Preferences {
   background: BackgroundId;
   visualQuality: string;
   selectPreset: (id: string) => void;
+  selectRandomPreset: () => void;
   setMasterVolume: (master: number) => void;
   setLayerProperty: <K extends keyof LayerConfig>(
     layer: Layer,
@@ -39,7 +40,7 @@ interface Preferences {
   setBackground: (value: BackgroundId) => void;
   setVisualQuality: (value: string) => void;
 }
-export const usePreferences = create<Preferences>((set) => {
+export const usePreferences = create<Preferences>((set, get) => {
   const savedColor = readStoredPreference("omyra.color", "");
   return {
     settings: readStoredSettings(),
@@ -58,6 +59,13 @@ export const usePreferences = create<Preferences>((set) => {
       set((s) => ({
         settings: { ...createPresetSettings(id), master: s.settings.master },
       })),
+    selectRandomPreset: () => {
+      const current = get().settings.preset;
+      const candidates = presets.filter((preset) => preset.id !== current);
+      if (candidates.length === 0) return;
+      const next = candidates[Math.floor(Math.random() * candidates.length)];
+      get().selectPreset(next.id);
+    },
     setMasterVolume: (master) =>
       set((s) => ({ settings: { ...s.settings, master } })),
     setLayerProperty: (layer, key, value) =>

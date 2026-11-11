@@ -1,4 +1,4 @@
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef, useEffect, useState } from "react";
 import * as THREE from "three";
 import type { AudioEngine } from "../audio/AudioEngine";
@@ -17,6 +17,12 @@ function BackgroundScene({
   colorMode: "fixed" | "drift";
   background: BackgroundId;
 }) {
+  const gl = useThree((state) => state.gl);
+  useEffect(() => {
+    const lost = (event: Event) => event.preventDefault();
+    gl.domElement.addEventListener("webglcontextlost", lost);
+    return () => gl.domElement.removeEventListener("webglcontextlost", lost);
+  }, [gl]);
   const material = useRef<THREE.ShaderMaterial>(null);
   const audioEnergy = useRef(0);
   const accentEnergy = useRef(0);
@@ -146,13 +152,6 @@ export default function BackgroundVisualizer({
       frameloop={paused ? "never" : "always"}
       dpr={visualQuality === "high" ? 1.5 : visualQuality === "low" ? 0.6 : 1}
       gl={{ antialias: false, powerPreference: "low-power" }}
-      onCreated={({ gl }) => {
-        // A lost context is recoverable. Three.js rebuilds resources on restore;
-        // never turn a temporary browser/GPU event into a saved preference.
-        gl.domElement.addEventListener("webglcontextlost", (event) => {
-          event.preventDefault();
-        });
-      }}
       fallback={null}
     >
       <BackgroundScene

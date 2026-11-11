@@ -1,7 +1,7 @@
-import React from "react";
+import { Select } from "./Select";
 import {
   Volume2,
-  ChevronDown,
+  Shuffle,
   ChevronLeft,
   ChevronRight,
   Waves,
@@ -24,7 +24,13 @@ const layerMetadataById = {
     icon: Orbit,
   },
 };
-export function SoundControls() {
+export function SoundControls({
+  shuffleEnabled,
+  onToggleShuffle,
+}: {
+  shuffleEnabled: boolean;
+  onToggleShuffle: () => void;
+}) {
   const { settings, setLayerProperty, setMasterVolume, selectPreset } =
     usePreferences(
       useShallow((s) => ({
@@ -48,35 +54,31 @@ export function SoundControls() {
       {" "}
       <section className="soundscapes" aria-label="Choose a soundscape">
         <div className="preset-picker">
-          <label className="preset-select">
+          <div className="preset-select">
             <span className="preset-label">Soundscape</span>
-            <span className="preset-value">
-              <select
-                aria-label="Soundscape"
-                value={preset.id}
-                onChange={(event) => selectPreset(event.target.value)}
-              >
-                {Object.entries(presetCategories).map(([category, label]) => (
-                  <React.Fragment key={category}>
-                    <option disabled value={`category-${category}`}>
-                      {label}
-                    </option>
-                    {presets
-                      .filter(
-                        (presetOption) => presetOption.category === category,
-                      )
-                      .map((presetOption) => (
-                        <option key={presetOption.id} value={presetOption.id}>
-                          {presetOption.name}
-                        </option>
-                      ))}
-                  </React.Fragment>
-                ))}
-              </select>
-              <ChevronDown size={16} aria-hidden="true" />
-            </span>
-          </label>
+            <Select
+              label="Soundscape"
+              value={preset.id}
+              onChange={selectPreset}
+              options={presets.map((p) => ({
+                value: p.id,
+                label: p.name,
+                group: presetCategories[p.category],
+              }))}
+            />
+          </div>
           <div className="preset-navigation">
+            <button
+              className={`preset-step shuffle-button ${shuffleEnabled ? "is-active" : ""}`}
+              aria-label="Shuffle playlist"
+              aria-pressed={shuffleEnabled}
+              aria-describedby="shuffle-help"
+              title="Random soundscape every 3 minutes of playback"
+              onClick={onToggleShuffle}
+            >
+              <Shuffle size={17} strokeWidth={1.4} />
+              <span className="sr-only">Shuffle playlist</span>
+            </button>
             <button
               className="preset-step"
               aria-label="Previous soundscape"
@@ -93,6 +95,11 @@ export function SoundControls() {
             </button>
           </div>
         </div>
+        <p id="shuffle-help" className="shuffle-help" aria-live="polite">
+          {shuffleEnabled
+            ? "Shuffle on · a new soundscape every 3 minutes of playback"
+            : "Shuffle off"}
+        </p>
       </section>
       <div className="control-bar">
         <div className="master">
