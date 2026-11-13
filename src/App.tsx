@@ -27,6 +27,16 @@ class VisualizerErrorBoundary extends Component<
     return this.state.failed ? null : this.props.children;
   }
 }
+function formatElapsedTime(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const seconds = totalSeconds % 60;
+  const clock = [minutes, seconds]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
+  return hours > 0 ? `${hours}:${clock}` : clock;
+}
+
 export default function App() {
   const {
     audioEngine,
@@ -115,12 +125,7 @@ export default function App() {
                 ? "Paused"
                 : "Press play to begin"}
           {elapsedSeconds > 0 && (
-            <span className="elapsed">
-              {Math.floor(elapsedSeconds / 60)
-                .toString()
-                .padStart(2, "0")}
-              :{(elapsedSeconds % 60).toString().padStart(2, "0")}
-            </span>
+            <span className="elapsed">{formatElapsedTime(elapsedSeconds)}</span>
           )}
         </div>
         {playbackError && (
