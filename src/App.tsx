@@ -1,5 +1,6 @@
 import React, { Component, Suspense, lazy } from "react";
 import { Play, Pause, Maximize2, Minimize2 } from "lucide-react";
+import { Analytics } from "@vercel/analytics/react";
 import { usePlayerSession } from "./usePlayerSession";
 import {
   usePreferences,
@@ -141,6 +142,7 @@ export default function App() {
         />
         <VisualPreferences />
       </div>
+      <Analytics />
     </main>
   );
 }
