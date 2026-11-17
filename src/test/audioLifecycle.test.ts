@@ -166,6 +166,27 @@ describe("audio ownership and lifecycle", () => {
     );
     e.dispose();
   });
+  it("uses the same calibrated gain when starting and fading in a preset", async () => {
+    const direct = new AudioEngine(createPresetSettings("zen"), 42);
+    await direct.start();
+    const [zenGain] = fake.racks[0].output.gain.rampTo.mock.lastCall;
+    expect(zenGain).toBeGreaterThan(1);
+    direct.dispose();
+
+    const switched = new AudioEngine(createPresetSettings("starward"), 42);
+    await switched.start();
+    const starward = fake.racks[1];
+    expect(starward.output.gain.rampTo.mock.lastCall[0]).toBeLessThan(1);
+
+    switched.apply(createPresetSettings("zen"));
+    await flush();
+    expect(starward.output.gain.rampTo).toHaveBeenLastCalledWith(0, 3);
+    expect(fake.racks[2].output.gain.rampTo).toHaveBeenLastCalledWith(
+      zenGain,
+      3,
+    );
+    switched.dispose();
+  });
   it("disposes pending initialization without reviving a destroyed engine", async () => {
     fake.defer = true;
     const e = new AudioEngine(createPresetSettings(), 42);

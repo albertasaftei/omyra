@@ -3,6 +3,27 @@ import { Composer, type NoteEvent, type PhrasePlan } from "./Composer";
 import { Performance } from "./Performance";
 import { VoiceRack } from "./VoiceRack";
 import { layers, type Settings, type MusicalEvent } from "./model";
+
+// Based on the median integrated loudness of three 90-second renders per preset.
+// Correct 75% of the difference from the library median to retain some contrast.
+const presetOutputGain: Record<string, number> = {
+  ethereal: 0.891,
+  zen: 1.413,
+  "deep-space": 1.318,
+  "golden-hour": 0.75,
+  "moon-garden": 1,
+  "tidal-dream": 1.396,
+  "velvet-night": 1.096,
+  aurora: 1.059,
+  starward: 0.531,
+  orbital: 1.109,
+  "distant-suns": 0.646,
+  eventide: 0.871,
+  momentum: 1.096,
+  gravity: 0.562,
+  supernova: 0.955,
+};
+
 export type PlaybackState = "idle" | "starting" | "playing" | "paused";
 type RackSlot = {
   rack: VoiceRack;
@@ -136,7 +157,10 @@ export class AudioEngine {
       this.elapsedAnchor = now;
       this.lastTick = now;
       this.setState("playing");
-      this.active.rack.output.gain.rampTo(1, 0.4);
+      this.active.rack.output.gain.rampTo(
+        presetOutputGain[this.activeId] ?? 1,
+        0.4,
+      );
       this.master!.gain.rampTo(this.settings.master, 0.5);
       for (const event of this.active.performance.sustaining(
         this.active.position,
@@ -221,7 +245,8 @@ export class AudioEngine {
         };
         this.activeId = id;
         this.applyMix();
-        if (this.state === "playing") rack.output.gain.rampTo(1, 3);
+        if (this.state === "playing")
+          rack.output.gain.rampTo(presetOutputGain[id] ?? 1, 3);
         return;
       }
     })();
