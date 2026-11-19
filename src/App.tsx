@@ -1,4 +1,4 @@
-import React, { Component, Suspense, lazy } from "react";
+import React, { Component, Suspense, lazy, useEffect, useState } from "react";
 import { Play, Pause, Maximize2, Minimize2 } from "lucide-react";
 import { Analytics } from "@vercel/analytics/react";
 import { usePlayerSession } from "./usePlayerSession";
@@ -58,25 +58,47 @@ export default function App() {
   const visualQuality = usePreferences((s) => s.visualQuality);
   const background = usePreferences((s) => s.background);
   const setVisualsEnabled = usePreferences((s) => s.setVisualsEnabled);
+  const [retainVisualizer, setRetainVisualizer] = useState(visualsEnabled);
+  if (visualsEnabled && !retainVisualizer) setRetainVisualizer(true);
+  useEffect(() => {
+    if (visualsEnabled || !retainVisualizer) return;
+    // Also release the canvas when a hidden tab skips the transition event.
+    const cleanup = window.setTimeout(() => setRetainVisualizer(false), 400);
+    return () => window.clearTimeout(cleanup);
+  }, [visualsEnabled, retainVisualizer]);
   return (
     <main
       className={isAmbientDisplay ? "app ambient" : "app"}
       style={{ "--accent": visualColor } as React.CSSProperties}
     >
       <div className="atmosphere" aria-hidden="true">
-        {visualsEnabled && (
-          <VisualizerErrorBoundary onFailure={() => setVisualsEnabled(false)}>
-            <Suspense fallback={null}>
-              <BackgroundVisualizer
-                engine={audioEngine}
-                color={visualColor}
-                colorMode={colorMode}
-                visualQuality={visualQuality}
-                background={background}
-                paused={isPageHidden}
-              />
-            </Suspense>
-          </VisualizerErrorBoundary>
+        {(visualsEnabled || retainVisualizer) && (
+          <div
+            className="visualizer-layer"
+            data-visible={visualsEnabled}
+            onTransitionEnd={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                event.propertyName === "opacity" &&
+                !visualsEnabled
+              ) {
+                setRetainVisualizer(false);
+              }
+            }}
+          >
+            <VisualizerErrorBoundary onFailure={() => setVisualsEnabled(false)}>
+              <Suspense fallback={null}>
+                <BackgroundVisualizer
+                  engine={audioEngine}
+                  color={visualColor}
+                  colorMode={colorMode}
+                  visualQuality={visualQuality}
+                  background={background}
+                  paused={isPageHidden}
+                />
+              </Suspense>
+            </VisualizerErrorBoundary>
+          </div>
         )}
       </div>
       <header className="site-header">

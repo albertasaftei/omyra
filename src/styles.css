@@ -82,8 +82,18 @@ button {
     radial-gradient(ellipse at 65% 35%, #343a6870, transparent 55%),
     radial-gradient(ellipse at 35% 50%, #8179b933, transparent 60%), #080b14;
 }
-.atmosphere > div {
-  height: 100% !important;
+.visualizer-layer {
+  position: absolute;
+  inset: 0;
+  transition: opacity 350ms ease-out;
+}
+.visualizer-layer[data-visible="false"] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .visualizer-layer {
+    transition: opacity 100ms ease-out !important;
+  }
 }
 .atmosphere:after {
   content: "";
@@ -1491,4 +1501,29 @@ footer {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
+}
+
+.visual-settings-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 280ms var(--ease),
+    opacity 200ms ease-out;
+}
+
+.visual-settings-disclosure[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.visual-settings-clip {
+  min-height: 0;
+  overflow: clip;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visual-settings-disclosure {
+    transition: opacity 100ms ease-out !important;
+  }
 }
