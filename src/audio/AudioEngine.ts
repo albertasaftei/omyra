@@ -108,7 +108,11 @@ export class AudioEngine {
     this.nodes.push(this.master);
     const limiter = new Tone.Limiter(-3).connect(this.master);
     this.nodes.push(limiter);
-    this.destination = new Tone.Filter(35, "highpass").connect(limiter);
+    // Raise the overall output by 6 dB before the limiter, keeping slider levels
+    // and the relative loudness of calibrated presets intact.
+    const outputBoost = new Tone.Gain(2).connect(limiter);
+    this.nodes.push(outputBoost);
+    this.destination = new Tone.Filter(35, "highpass").connect(outputBoost);
     this.nodes.push(this.destination);
     Tone.getContext().on("statechange", this.contextChanged);
     this.scheduleId = Tone.getTransport().scheduleRepeat(
